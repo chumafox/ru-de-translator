@@ -1,0 +1,57 @@
+Traceback (most recent call last):
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/tts.py", line 398, in speak
+    await loop.run_in_executor(None, self._speak_qwen, text, repeat)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/tts.py", line 275, in _speak_qwen
+    for result in self._model.generate(
+                  ~~~~~~~~~~~~~~~~~~~~^
+        text=text,
+        ^^^^^^^^^^
+    ...<3 lines>...
+        streaming_interval=0.32,
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    ):
+    ^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_audio/tts/models/qwen3/qwen3.py", line 364, in generate
+    for i, response in enumerate(
+                       ~~~~~~~~~^
+        tqdm(
+        ^^^^^
+    ...<11 lines>...
+        )
+        ^
+    ):
+    ^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/tqdm/std.py", line 1169, in __iter__
+    for obj in iterable:
+               ^^^^^^^^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/generate.py", line 698, in stream_generate
+    for n, (token, logprobs, from_draft) in enumerate(token_generator):
+                                            ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/generate.py", line 688, in <genexpr>
+    (token, logprobs, False) for token, logprobs in token_generator
+                                                    ^^^^^^^^^^^^^^^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/generate.py", line 424, in generate_step
+    _model_call(
+    ~~~~~~~~~~~^
+        input_tokens=prompt[:n_to_process][None],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        ),
+        ^^
+    )
+    ^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/generate.py", line 385, in _model_call
+    return model(input_tokens, cache=prompt_cache)
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/models/qwen3.py", line 176, in __call__
+    out = self.model(inputs, cache, input_embeddings)
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/models/qwen3.py", line 156, in __call__
+    h = layer(h, mask, c)
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_lm/models/qwen3.py", line 120, in __call__
+    r = self.self_attn(self.input_layernorm(x), mask, cache)
+                       ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx/nn/layers/normalization.py", line 143, in __call__
+    return mx.fast.rms_norm(x, self["weight"], self.eps)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: [rms_norm] (*weight) must have the same size as the last dimension of x but has 1024 elements.
