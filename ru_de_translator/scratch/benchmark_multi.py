@@ -1,11 +1,14 @@
 """Multi-iteration E2E benchmark: validates consistent hot-path latency."""
+
 import asyncio
 import time
 import sys
+
 sys.path.insert(0, ".")
 
 from translator import Translator
 from tts import TTSEngine
+
 
 async def main():
     config = {
@@ -44,12 +47,15 @@ async def main():
 
         t_total = time.perf_counter() - t_start
         results.append(t_total)
-        print(f"Run {i+1}: '{phrase}' → '{translation}'  |  "
-              f"translate={t_trans*1000:.0f}ms  tts={t_tts*1000:.0f}ms  total={t_total*1000:.0f}ms")
+        print(
+            f"Run {i + 1}: '{phrase}' → '{translation}'  |  "
+            f"translate={t_trans * 1000:.0f}ms  tts={t_tts * 1000:.0f}ms  total={t_total * 1000:.0f}ms"
+        )
         await asyncio.sleep(0.3)
 
     avg = sum(results) / len(results) * 1000
     print(f"\nAverage E2E: {avg:.0f}ms")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,4 +1,3 @@
-import sys
 import re
 
 file_path = "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/.venv/lib/python3.13/site-packages/mlx_audio/tts/models/qwen3/qwen3.py"
@@ -23,7 +22,7 @@ class ModelConfig(Qwen3ModelConfig):
 content = re.sub(
     r"@dataclass\nclass ModelConfig\(Qwen3ModelConfig\):\n    tokenizer_name: str = None\n    sample_rate: int = 24000\n",
     patch,
-    content
+    content,
 )
 
 with open(file_path, "w") as f:

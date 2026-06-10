@@ -17,6 +17,7 @@ dependencies = [
     "mlx>=0.31.2",
     "mlx-audio>=0.2.10",
     "pydub>=0.25.1",
+    "aiohttp-socks>=0.11.0",
 ]
 
 [project.scripts]

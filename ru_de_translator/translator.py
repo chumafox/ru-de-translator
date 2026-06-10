@@ -55,6 +55,7 @@ class Translator:
                 self._ct2_translator = None
                 self._ct2_tokenizer = None
                 import gc
+
                 gc.collect()
 
     async def translate(self, text: str) -> str:
@@ -94,7 +95,9 @@ class Translator:
         )
 
         payload = {
-            "contents": [{"parts": [{"text": _USER_PROMPT_TEMPLATE.format(text=text)}]}],
+            "contents": [
+                {"parts": [{"text": _USER_PROMPT_TEMPLATE.format(text=text)}]}
+            ],
             "generationConfig": {"temperature": 0.1},
         }
 
@@ -108,7 +111,9 @@ class Translator:
 
             if response.status_code != 200:
                 try:
-                    err_msg = response.json().get("error", {}).get("message", response.text)
+                    err_msg = (
+                        response.json().get("error", {}).get("message", response.text)
+                    )
                 except Exception:
                     err_msg = response.text
                 raise TranslationError(
@@ -139,7 +144,7 @@ class Translator:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
-            "options": {"temperature": 0.1},
+            "options": {"temperature": 0.1, "num_ctx": 1024, "num_predict": 150},
             "stream": False,
         }
 
@@ -159,6 +164,11 @@ class Translator:
 
             result = response.json()
             content = result.get("message", {}).get("content", "").strip()
+            import re
+
+            content = re.sub(
+                r"<think>.*?</think>", "", content, flags=re.DOTALL
+            ).strip()
             if not content:
                 raise TranslationError("Ollama returned an empty translation.")
             return content
@@ -166,7 +176,9 @@ class Translator:
     # ── LM Studio ───────────────────────────────────────────────────────
 
     async def _translate_lm_studio(self, text: str) -> str:
-        base_url = self.config.get("lm_studio_url", "http://localhost:1234/v1").rstrip("/")
+        base_url = self.config.get("lm_studio_url", "http://localhost:1234/v1").rstrip(
+            "/"
+        )
         model = self.config.get("lm_studio_model", "local-model")
         url = f"{base_url}/chat/completions"
 
@@ -230,9 +242,7 @@ class Translator:
                 "For macOS: '/Applications/translateLocally.app/Contents/MacOS/translateLocally'."
             )
         except asyncio.TimeoutError:
-            raise TranslationError(
-                "translateLocally timed out after 60 seconds."
-            )
+            raise TranslationError("translateLocally timed out after 60 seconds.")
         except OSError as e:
             raise TranslationError(f"translateLocally launch failed: {e}") from e
 
@@ -257,10 +267,14 @@ class Translator:
             ) from e
 
         model_path = os.path.expanduser(
-            self.config.get("ctranslate2_model_path", "~/.config/ru_de_translator/opus-zle-de-ct2")
+            self.config.get(
+                "ctranslate2_model_path", "~/.config/ru_de_translator/opus-zle-de-ct2"
+            )
         )
         tokenizer_path = os.path.expanduser(
-            self.config.get("ctranslate2_tokenizer_path", "~/.config/ru_de_translator/tokenizer")
+            self.config.get(
+                "ctranslate2_tokenizer_path", "~/.config/ru_de_translator/tokenizer"
+            )
         )
 
         if not os.path.isdir(model_path):
@@ -272,11 +286,14 @@ class Translator:
         def _sync_translate() -> str:
             with self._ct2_lock:
                 # Invalidate cached translator if the model path changed
-                if self._ct2_translator is not None and self._ct2_model_path != model_path:
+                if (
+                    self._ct2_translator is not None
+                    and self._ct2_model_path != model_path
+                ):
                     logger.info("CTranslate2 model path changed, reloading...")
                     self._ct2_translator = None
                     self._ct2_tokenizer = None
-    
+
                 if self._ct2_translator is None:
                     logger.info("Loading CTranslate2 model from %s", model_path)
                     self._ct2_translator = ctranslate2.Translator(
@@ -286,7 +303,9 @@ class Translator:
                         inter_threads=1,
                         intra_threads=4,
                     )
-                    self._ct2_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+                    self._ct2_tokenizer = AutoTokenizer.from_pretrained(
+                        tokenizer_path, local_files_only=True
+                    )
                     self._ct2_model_path = model_path
 
             tokens = self._ct2_tokenizer.convert_ids_to_tokens(

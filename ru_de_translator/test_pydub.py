@@ -1,4 +1,3 @@
-import io
 from pydub import AudioSegment
 
 final = AudioSegment.empty()

@@ -2,8 +2,8 @@
 """
 Benchmark for Qwen3-TTS: measures TTFB, inter-chunk latency, and throughput.
 
-Usage:                                                                                                                                                                                
-  # Sequential only (short/medium/long)                                                                                                                                                                 
+Usage:
+  # Sequential only (short/medium/long)
   python qwen3_tts_benchmark.py --model mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16
 
   # Sequential + batched (1,2,3,4,8)
@@ -25,7 +25,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 import mlx.core as mx
 
@@ -401,7 +401,7 @@ def print_trial_detail(trial: TrialResult) -> None:
         print(
             f"  {'Chunk':>5} | {'Tokens':>6} | {'Samples':>8} | {'Latency':>10} | {'Cumulative':>10}"
         )
-        print(f"  {'─'*5} | {'─'*6} | {'─'*8} | {'─'*10} | {'─'*10}")
+        print(f"  {'─' * 5} | {'─' * 6} | {'─' * 8} | {'─' * 10} | {'─' * 10}")
         for cm in trial.chunk_metrics:
             print(
                 f"  {cm.chunk_idx:>5} | {cm.token_count:>6} | {cm.audio_samples:>8} | "
@@ -411,9 +411,9 @@ def print_trial_detail(trial: TrialResult) -> None:
 
 def print_summary(summary: BenchmarkSummary) -> None:
     """Print aggregated benchmark summary."""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  Summary: '{summary.prompt_key}' ({summary.num_trials} trials)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(
         f"  TTFB        avg={summary.ttfb_avg_ms:.1f}ms  min={summary.ttfb_min_ms:.1f}ms  "
         f"max={summary.ttfb_max_ms:.1f}ms  std={summary.ttfb_std_ms:.1f}ms"
@@ -426,7 +426,7 @@ def print_summary(summary: BenchmarkSummary) -> None:
     print(f"  Throughput   {summary.tokens_per_sec_avg:.1f} tokens/sec")
     print(f"  RTF          {summary.rtf_avg:.2f}x realtime")
     print(f"  Peak memory  {summary.peak_memory_gb:.2f}GB")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
 
 def main():
@@ -532,7 +532,7 @@ def main():
             print(f"Auto-selected voice: '{voice}' (available: {speakers})")
         else:
             voice = "Chelsie"  # fallback for base models
-    print(f"Model loaded successfully.\n")
+    print("Model loaded successfully.\n")
 
     # Determine prompts
     if args.custom_prompt:
@@ -561,11 +561,11 @@ def main():
     all_summaries = []
 
     for prompt_key, prompt_text in prompt_map.items():
-        print(f"\n{'─'*70}")
+        print(f"\n{'─' * 70}")
         print(
             f"Benchmarking: '{prompt_key}' ({len(prompt_text)} chars, {args.num_trials} trials)"
         )
-        print(f"{'─'*70}")
+        print(f"{'─' * 70}")
 
         trials = []
         for trial_idx in range(args.num_trials):
@@ -602,25 +602,27 @@ def main():
 
     # Final comparison table
     if len(all_summaries) > 1:
-        print(f"\n\n{'='*70}")
-        print(f"  Comparison Across Prompts")
-        print(f"{'='*70}")
+        print(f"\n\n{'=' * 70}")
+        print("  Comparison Across Prompts")
+        print(f"{'=' * 70}")
         print(
             f"  {'Prompt':<10} | {'TTFB(ms)':>10} | {'InterChunk':>10} | {'TPS':>8} | {'RTF':>6} | {'Mem(GB)':>8}"
         )
-        print(f"  {'─'*10} | {'─'*10} | {'─'*10} | {'─'*8} | {'─'*6} | {'─'*8}")
+        print(
+            f"  {'─' * 10} | {'─' * 10} | {'─' * 10} | {'─' * 8} | {'─' * 6} | {'─' * 8}"
+        )
         for s in all_summaries:
             print(
                 f"  {s.prompt_key:<10} | {s.ttfb_avg_ms:>8.1f}ms | {s.inter_chunk_avg_ms:>8.1f}ms | "
                 f"{s.tokens_per_sec_avg:>8.1f} | {s.rtf_avg:>5.2f}x | {s.peak_memory_gb:>7.2f}"
             )
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
     # Batch benchmarking
     if args.batch_size:
-        print(f"\n\n{'='*70}")
-        print(f"  Batch Generation Benchmark")
-        print(f"{'='*70}")
+        print(f"\n\n{'=' * 70}")
+        print("  Batch Generation Benchmark")
+        print(f"{'=' * 70}")
 
         # Use the first prompt for batch benchmarking
         prompt_key = list(prompt_map.keys())[0]
@@ -674,14 +676,16 @@ def main():
 
         # Comparison table across batch sizes
         if len(batch_results) > 1:
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"  Batch Size Comparison (prompt: '{prompt_key}')")
-            print(f"{'='*70}")
+            print(f"{'=' * 70}")
             print(
                 f"  {'Batch':>5} | {'TotalTime(ms)':>13} | {'TPS':>8} | "
                 f"{'AvgTTFB(ms)':>11} | {'Throughput':>10} | {'Mem(GB)':>8}"
             )
-            print(f"  {'─'*5} | {'─'*13} | {'─'*8} | {'─'*11} | {'─'*10} | {'─'*8}")
+            print(
+                f"  {'─' * 5} | {'─' * 13} | {'─' * 8} | {'─' * 11} | {'─' * 10} | {'─' * 8}"
+            )
             for bs, trials in batch_results:
                 avg_time = statistics.mean([t.total_time_ms for t in trials])
                 avg_tps = statistics.mean([t.tokens_per_second for t in trials])
@@ -692,7 +696,7 @@ def main():
                     f"  {bs:>5} | {avg_time:>11.1f}ms | {avg_tps:>8.1f} | "
                     f"{avg_ttfb:>9.1f}ms | {avg_throughput:>9.2f}x | {peak_mem:>7.2f}"
                 )
-            print(f"{'='*70}")
+            print(f"{'=' * 70}")
 
 
 if __name__ == "__main__":
