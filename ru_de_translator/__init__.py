@@ -1,1 +1,3 @@
-# Ru-De Translator TUI Package
+"""RU-DE Translator package."""
+
+__version__ = "0.3.0"

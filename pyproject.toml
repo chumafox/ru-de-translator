@@ -1,0 +1,67 @@
+[project]
+name = "ru-de-translator"
+version = "0.3.0"
+description = "Fast Russian-to-German terminal translator with pronunciation and practice mode."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "chumafox" }]
+keywords = ["translator", "russian", "german", "tui", "tts"]
+dependencies = [
+    "textual>=0.50.0,<2",
+    "httpx>=0.25.0,<1",
+    "edge-tts>=6.1.12,<8",
+    "ctranslate2>=4.4,<5",
+    "transformers>=4.40,<6",
+    "sentencepiece>=0.2,<1",
+    "sacremoses>=0.1,<1",
+    "pydub>=0.25.1,<1",
+]
+
+[project.optional-dependencies]
+# Qwen/MLX is only supported on Apple Silicon. The default Edge TTS path stays portable.
+qwen = [
+    "mlx>=0.31.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx-audio>=0.2.10; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<2",
+    "ruff>=0.6,<1",
+]
+
+[project.scripts]
+ru-de-translator = "ru_de_translator.app:main"
+rude = "ru_de_translator.app:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/ru_de_translator/.hermes",
+    "/ru_de_translator/.gitignore",
+    "/ru_de_translator/scratch",
+    "/ru_de_translator/test_*.py",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ru_de_translator"]
+exclude = [
+    "/ru_de_translator/.hermes",
+    "/ru_de_translator/.gitignore",
+    "/ru_de_translator/scratch",
+    "/ru_de_translator/test_*.py",
+]

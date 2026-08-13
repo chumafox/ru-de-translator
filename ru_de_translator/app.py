@@ -13,29 +13,33 @@ Keyboard shortcuts:
 
 import asyncio
 import logging
-import sys
 import os
+import sys
+from pathlib import Path
+
+from rich.markup import escape
 
 # Disable tqdm and its monitor thread to prevent Python 3.13 fatal errors during shutdown
 # and to prevent progress bars from corrupting the Textual TUI.
 os.environ["TQDM_DISABLE"] = "1"
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Header,
+    Button,
+    Checkbox,
     Footer,
+    Header,
     Input,
     Label,
-    Button,
     Select,
-    Checkbox,
     Static,
 )
-from textual.binding import Binding
-from ru_de_translator.config import load_config, save_config, setup_logging
-from ru_de_translator.translator import Translator, TranslationError
+
+from ru_de_translator.config import load_config, normalize_config, save_config, setup_logging
+from ru_de_translator.translator import TranslationError, Translator
 from ru_de_translator.tts import TTSEngine, TTSError
 
 logger = logging.getLogger(__name__)
@@ -51,9 +55,7 @@ def _setup_excepthook() -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
-        logger.error(
-            "Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback)
-        )
+        logger.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
     sys.excepthook = handle_exception
 
@@ -154,10 +156,10 @@ class SettingsScreen(ModalScreen[dict]):
                     id="input-ctranslate2-path",
                 )
 
-                yield Label("CTranslate2 Tokenizer Name:", classes="settings-label")
+                yield Label("CTranslate2 Tokenizer Path:", classes="settings-label")
                 yield Input(
-                    value=self.config.get("ctranslate2_tokenizer_name", ""),
-                    placeholder="e.g. Helsinki-NLP/opus-mt-tc-big-zle-de",
+                    value=self.config.get("ctranslate2_tokenizer_path", ""),
+                    placeholder="e.g. ~/.config/ru_de_translator/tokenizer",
                     id="input-ctranslate2-tokenizer",
                 )
 
@@ -175,9 +177,7 @@ class SettingsScreen(ModalScreen[dict]):
 
                 yield Label("Qwen TTS Model:", classes="settings-label")
                 yield Input(
-                    value=self.config.get(
-                        "qwen_tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-                    ),
+                    value=self.config.get("qwen_tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"),
                     placeholder="e.g. Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
                     id="input-qwen-tts-model",
                 )
@@ -235,6 +235,10 @@ class SettingsScreen(ModalScreen[dict]):
         """Populate voice dropdown asynchronously on mount."""
         self._voice_task = self.app.run_bg_task(self._load_voices())
 
+    def on_unmount(self) -> None:
+        if self._voice_task is not None and not self._voice_task.done():
+            self._voice_task.cancel()
+
     async def _load_voices(self) -> None:
         """Loads available Edge TTS voices into the Select widget."""
         voice_select = self.query_one("#select-voice", Select)
@@ -278,6 +282,17 @@ class SettingsScreen(ModalScreen[dict]):
         if voice_val not in (Select.BLANK, "loading"):
             self.config["edge_voice"] = voice_val
 
+        # Validate bounded numeric settings before dismissing the dialog.
+        try:
+            repeats = int(self.query_one("#input-practice-repeats", Input).value or 3)
+            pause = float(self.query_one("#input-practice-pause", Input).value or 2.0)
+        except ValueError:
+            self.notify("Repeats and pause must be numbers", severity="error")
+            return
+        if not 1 <= repeats <= 20 or not 0 <= pause <= 30:
+            self.notify("Repeats: 1–20; pause: 0–30 seconds", severity="error")
+            return
+
         # Read text inputs
         self.config.update(
             {
@@ -286,38 +301,24 @@ class SettingsScreen(ModalScreen[dict]):
                 "ollama_url": self.query_one("#input-ollama-url", Input).value,
                 "ollama_model": self.query_one("#input-ollama-model", Input).value,
                 "lm_studio_url": self.query_one("#input-lm-studio-url", Input).value,
-                "lm_studio_model": self.query_one(
-                    "#input-lm-studio-model", Input
-                ).value,
-                "translatelocally_bin": self.query_one(
-                    "#input-translatelocally-bin", Input
-                ).value,
+                "lm_studio_model": self.query_one("#input-lm-studio-model", Input).value,
+                "translatelocally_bin": self.query_one("#input-translatelocally-bin", Input).value,
                 "translatelocally_model": self.query_one(
                     "#input-translatelocally-model", Input
                 ).value,
-                "ctranslate2_model_path": self.query_one(
-                    "#input-ctranslate2-path", Input
-                ).value,
-                "ctranslate2_tokenizer_name": self.query_one(
+                "ctranslate2_model_path": self.query_one("#input-ctranslate2-path", Input).value,
+                "ctranslate2_tokenizer_path": self.query_one(
                     "#input-ctranslate2-tokenizer", Input
                 ).value,
                 "qwen_tts_model": self.query_one("#input-qwen-tts-model", Input).value,
-                "qwen_tts_voice": self.query_one(
-                    "#select-qwen-tts-voice", Select
-                ).value,
-                "auto_pronounce": self.query_one(
-                    "#check-auto-pronounce", Checkbox
-                ).value,
-                "practice_repeats": int(
-                    self.query_one("#input-practice-repeats", Input).value or 3
-                ),
-                "practice_pause": float(
-                    self.query_one("#input-practice-pause", Input).value or 2.0
-                ),
+                "qwen_tts_voice": self.query_one("#select-qwen-tts-voice", Select).value,
+                "auto_pronounce": self.query_one("#check-auto-pronounce", Checkbox).value,
+                "practice_repeats": repeats,
+                "practice_pause": pause,
             }
         )
 
-        self.dismiss(self.config)
+        self.dismiss(normalize_config(self.config))
 
 
 # ── Main Application ───────────────────────────────────────────────────
@@ -342,7 +343,13 @@ class TranslatorApp(App):
             self._bg_tasks = set()
         task = asyncio.create_task(coro)
         self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
+
+        def task_done(done: asyncio.Task) -> None:
+            self._bg_tasks.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logger.error("Background task failed: %r", done.exception())
+
+        task.add_done_callback(task_done)
         return task
 
     def __init__(self) -> None:
@@ -364,7 +371,7 @@ class TranslatorApp(App):
 
             yield Label("German Translation:", classes="section-title")
             with Container(id="result-container"):
-                yield Static("", id="result-text")
+                yield Static("", id="result-text", markup=False)
 
             yield Label("Status:", classes="section-title")
             yield Static("Ready", id="status-msg")
@@ -373,9 +380,7 @@ class TranslatorApp(App):
                 yield Button("Translate (Enter)", id="btn-translate")
                 yield Button("Pronounce (Ctrl+P)", id="btn-speak")
                 yield Button("Practice (Alt+R)", id="btn-practice")
-                yield Button(
-                    "Export Audio (Ctrl+E)", id="btn-export", variant="warning"
-                )
+                yield Button("Export Audio (Ctrl+E)", id="btn-export", variant="warning")
                 yield Button("Stop Audio (Ctrl+S)", id="btn-stop")
                 yield Button("Settings (F1)", id="btn-settings")
 
@@ -388,46 +393,10 @@ class TranslatorApp(App):
         self.run_bg_task(self._check_and_start_dependencies())
 
     async def _check_and_start_dependencies(self) -> None:
-        import urllib.request
-        import subprocess
-        import asyncio
-
-        # Check Ollama
-        ollama_running = False
-        try:
-            req = urllib.request.Request("http://127.0.0.1:11434/")
-            await asyncio.to_thread(urllib.request.urlopen, req, timeout=1)
-            ollama_running = True
-        except Exception:
-            pass
-
-        if not ollama_running:
-            try:
-                subprocess.Popen(
-                    ["ollama", "serve"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).error(f"Failed to start Ollama: {e}")
-
-            # Wait up to 15 seconds for Ollama
-            for _ in range(15):
-                await asyncio.sleep(1)
-                try:
-                    await asyncio.to_thread(
-                        urllib.request.urlopen, "http://127.0.0.1:11434/", timeout=1
-                    )
-                    break
-                except Exception:
-                    pass
-
-        # Warmup models in background to avoid latency
-        self.run_bg_task(self.tts.warmup())
-        # Setup idle timer for unloading models
-        self._idle_timer = self.set_timer(300, self._unload_models)
+        """Warm only the selected backend; never start unrelated system services."""
+        await self.tts.warmup()
+        timeout = int(self.config.get("model_idle_timeout", 300))
+        self._idle_timer = self.set_timer(timeout, self._unload_models)
 
     def _reset_idle_timer(self) -> None:
         """Resets the auto-unload idle timer."""
@@ -444,23 +413,23 @@ class TranslatorApp(App):
         logger.info("Idle timeout reached. Unloading models to free RAM.")
         await asyncio.to_thread(self.tts.unload)
         await asyncio.to_thread(self.translator.unload)
-        self._set_status(
-            "Models unloaded (RAM freed). Will reload on next translation."
-        )
+        self._set_status("Models unloaded (RAM freed). Will reload on next translation.")
 
     def _update_title_bar(self) -> None:
         """Updates the header title to reflect current provider and voice."""
-        provider = self.config.get("translation_provider", "gemini").upper()
-        voice = self.config.get("edge_voice", "")
-        self.title = f"RU-DE Translator [{provider} + EDGE_TTS ({voice})]"
+        provider = self.config.get("translation_provider", "ctranslate2").upper()
+        tts_provider = self.config.get("tts_provider", "edge_tts").upper()
+        voice_key = "edge_voice" if tts_provider == "EDGE_TTS" else "qwen_tts_voice"
+        voice = self.config.get(voice_key, "")
+        self.title = f"RU-DE Translator [{provider} + {tts_provider} ({voice})]"
 
     def _set_status(self, text: str, *, error: bool = False) -> None:
         """Updates the status message widget."""
         status = self.query_one("#status-msg", Static)
         if error:
-            status.update(f"[bold red]✗ {text}[/]")
+            status.update(f"[bold red]✗ {escape(text)}[/]")
         else:
-            status.update(f"[cyan]{text}[/]")
+            status.update(f"[cyan]{escape(text)}[/]")
 
     # ── Event handlers ──────────────────────────────────────────────────
 
@@ -530,18 +499,20 @@ class TranslatorApp(App):
             if not self.tts._stop_event.is_set():
                 self._set_status("Playback finished ✓")
                 # Record audio for export
-                new_audio = (self.tts._last_audio_chunks, self.tts._last_audio_type)
-                if not self.session_history or self.session_history[-1] != new_audio:
+                new_audio = (list(self.tts._last_audio_chunks), self.tts._last_audio_type)
+                if new_audio[0] and (
+                    not self.session_history or self.session_history[-1] != new_audio
+                ):
                     self.session_history.append(new_audio)
+                    # Bound memory retained by long sessions.
+                    del self.session_history[:-50]
         except Exception as e:
             logger.warning("TTS failed: %s", e)
             self._set_status(str(e), error=True)
 
     async def _do_export(self) -> None:
         if not self.session_history:
-            self._set_status(
-                "Nothing to export. Translate something first.", error=True
-            )
+            self._set_status("Nothing to export. Translate something first.", error=True)
             return
 
         repeats = int(self.config.get("practice_repeats", 3))
@@ -551,8 +522,8 @@ class TranslatorApp(App):
 
         def run_export():
             import io
-            import os
             from datetime import datetime
+
             from pydub import AudioSegment
 
             final_audio = AudioSegment.empty()
@@ -563,9 +534,16 @@ class TranslatorApp(App):
                 if audio_type == "mp3":
                     audio = AudioSegment.from_file(io.BytesIO(full_bytes), format="mp3")
                 elif audio_type == "pcm":
-                    # Qwen PCM f32le: Need to handle float32 carefully, pydub natively prefers ints
+                    # Convert float32 PCM to signed int16; pydub interprets 4-byte PCM as int32.
+                    import array
+
+                    samples = array.array("f")
+                    samples.frombytes(full_bytes)
+                    pcm16 = array.array(
+                        "h", (max(-32768, min(32767, int(sample * 32767))) for sample in samples)
+                    )
                     audio = AudioSegment(
-                        data=full_bytes, sample_width=4, frame_rate=24000, channels=1
+                        data=pcm16.tobytes(), sample_width=2, frame_rate=24000, channels=1
                     )
                 else:
                     continue
@@ -578,11 +556,10 @@ class TranslatorApp(App):
                 # Pause between different phrases
                 final_audio += AudioSegment.silent(duration=2000)
 
-            desktop = os.path.expanduser("~/Desktop")
-            filename = (
-                f"Practice_Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.mp3"
-            )
-            out_path = os.path.join(desktop, filename)
+            export_dir = Path(self.config.get("export_dir", "~/Desktop")).expanduser()
+            export_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"Practice_Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.mp3"
+            out_path = str(export_dir / filename)
             final_audio.export(out_path, format="mp3")
             return out_path
 
@@ -652,18 +629,35 @@ class TranslatorApp(App):
         def _on_dismiss(new_config: dict | None) -> None:
             if new_config is None:
                 return
-            self.config = new_config
-            save_config(self.config)
-            # Recreate backends with new settings
+            old_translator, old_tts = self.translator, self.tts
+            normalized = normalize_config(new_config)
+            try:
+                save_config(normalized)
+            except OSError as exc:
+                self.notify(f"Could not save settings: {exc}", severity="error")
+                return
+            self.config = normalized
+            # Recreate backends and release models/clients owned by the old instances.
             self.translator = Translator(self.config)
             self.tts = TTSEngine(self.config)
+            old_tts.stop()
+            self.run_bg_task(old_translator.close())
+            self.run_bg_task(asyncio.to_thread(old_tts.unload))
             self._update_title_bar()
             self.notify("Settings saved ✓", severity="information")
-            logger.info(
-                "Settings updated: provider=%s", self.config.get("translation_provider")
-            )
+            logger.info("Settings updated: provider=%s", self.config.get("translation_provider"))
 
         self.push_screen(SettingsScreen(self.config), _on_dismiss)
+
+    async def on_unmount(self) -> None:
+        """Cancel work and release processes, clients, and local models on exit."""
+        self.tts.stop()
+        current = asyncio.current_task()
+        for task in tuple(getattr(self, "_bg_tasks", ())):
+            if task is not current:
+                task.cancel()
+        await self.translator.close()
+        await asyncio.to_thread(self.tts.unload)
 
 
 # ── Entry point ─────────────────────────────────────────────────────────

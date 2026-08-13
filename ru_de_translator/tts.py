@@ -8,32 +8,12 @@ import asyncio
 import hashlib
 import logging
 import queue
+import shutil
 import subprocess
 import threading
 from collections import OrderedDict
 
-# Monkey-patch subprocess.Popen to bypass macOS Python 3.13 fds_to_keep bug in threads
-_original_popen = subprocess.Popen
-
-
-class _MonkeyPatchedPopen(_original_popen):
-    def __init__(self, *args, **kwargs):
-        kwargs["close_fds"] = False
-        super().__init__(*args, **kwargs)
-
-
-subprocess.Popen = _MonkeyPatchedPopen
-
-# Pre-initialize tqdm's multiprocessing lock in the main thread during import.
-try:
-    from tqdm import tqdm
-
-    tqdm.get_lock()
-except Exception:
-    pass
-
 import edge_tts
-import mlx.core as mx
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +28,11 @@ class TTSEngine:
         self._model = None
         self._model_path: str | None = None
         self._stop_event = threading.Event()
-        self._cache: OrderedDict[str, list[bytes]] = (
-            OrderedDict()
-        )  # text+voice hash → chunks
+        self._cache: OrderedDict[str, list[bytes]] = OrderedDict()  # text+voice hash → chunks
         self._ffplay_proc: subprocess.Popen | None = None
         self._model_lock = threading.Lock()
+        self._speak_lock = asyncio.Lock()
+        self._edge_cache: OrderedDict[str, list[bytes]] = OrderedDict()
 
         # Stored for practice mode
         self._last_audio_type: str | None = None
@@ -68,8 +48,10 @@ class TTSEngine:
 
                 gc.collect()
                 try:
+                    import mlx.core as mx
+
                     mx.metal.clear_cache()
-                except Exception:
+                except (ImportError, AttributeError):
                     pass
 
     async def warmup(self) -> None:
@@ -87,7 +69,7 @@ class TTSEngine:
 
         model_path = self.config.get(
             "qwen_tts_model",
-            "/Users/jenyanovak/.cache/huggingface/hub/models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-4bit",
+            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
         )
         voice = self.config.get("qwen_tts_voice", "ryan")
 
@@ -132,9 +114,7 @@ class TTSEngine:
     @classmethod
     async def get_edge_voices(cls) -> list[dict]:
         try:
-            manager = await asyncio.wait_for(
-                edge_tts.VoicesManager.create(), timeout=3.0
-            )
+            manager = await asyncio.wait_for(edge_tts.VoicesManager.create(), timeout=3.0)
             return sorted(
                 [
                     {"friendly_name": v["FriendlyName"], "name": v["Name"]}
@@ -145,9 +125,7 @@ class TTSEngine:
             )
         except Exception as e:
             logger.error("Failed to fetch Edge TTS voices: %s", e)
-            return [
-                {"friendly_name": "Fallback Voice (Katja)", "name": "de-DE-KatjaNeural"}
-            ]
+            return [{"friendly_name": "Fallback Voice (Katja)", "name": "de-DE-KatjaNeural"}]
 
     @staticmethod
     def _spawn_ffplay_mp3() -> subprocess.Popen:
@@ -167,7 +145,7 @@ class TTSEngine:
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            close_fds=False,
+            close_fds=True,
         )
 
     @staticmethod
@@ -194,7 +172,7 @@ class TTSEngine:
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            close_fds=False,
+            close_fds=True,
         )
 
     def _player_thread(self, audio_q: queue.Queue, done_event: threading.Event) -> None:
@@ -226,6 +204,8 @@ class TTSEngine:
 
     def _speak_qwen(self, text: str, repeat: int = 1) -> None:
         """Synchronous: generates audio via MLX and streams to ffplay."""
+        if shutil.which("ffplay") is None:
+            raise TTSError("ffplay not found. Please install FFmpeg.")
         try:
             from mlx_audio.tts.utils import load_model as load
         except ImportError as e:
@@ -233,9 +213,16 @@ class TTSEngine:
 
         model_path = self.config.get(
             "qwen_tts_model",
-            "/Users/jenyanovak/.cache/huggingface/hub/models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-4bit",
+            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
         )
         voice = self.config.get("qwen_tts_voice", "ryan")
+
+        try:
+            import mlx.core as mx
+        except ImportError as exc:
+            raise TTSError(
+                "Qwen TTS requires the Apple Silicon extra: uv sync --extra qwen"
+            ) from exc
 
         text_hash = int(hashlib.md5(text.encode()).hexdigest(), 16) & 0xFFFFFFFF
         mx.random.seed(text_hash)
@@ -327,9 +314,7 @@ class TTSEngine:
                 if result.audio is not None:
                     import numpy as np
 
-                    chunk_bytes = (
-                        np.array(result.audio, copy=False).astype(np.float32).tobytes()
-                    )
+                    chunk_bytes = np.array(result.audio, copy=False).astype(np.float32).tobytes()
                     collected_chunks.append(chunk_bytes)
                     try:
                         audio_q.put(chunk_bytes, timeout=10.0)
@@ -356,18 +341,30 @@ class TTSEngine:
                 import time as _time
 
                 _time.sleep(0.5)
-                for r in range(repeat - 1):
+                for _r in range(repeat - 1):
                     if self._stop_event.is_set():
                         break
                     _play_chunks(collected_chunks)
-                    if r < repeat - 2 and not self._stop_event.is_set():
+                    if _r < repeat - 2 and not self._stop_event.is_set():
                         _time.sleep(0.5)
 
     async def _speak_edge(self, text: str, repeat: int = 1) -> None:
         voice = self.config.get("edge_voice", "de-DE-KatjaNeural")
 
-        # Edge TTS generates dynamically, but we'll collect chunks to support practice mode natively
-        collected_chunks = []
+        cache_key = f"{text}||{voice}"
+        cached = self._edge_cache.get(cache_key)
+        if cached:
+            self._edge_cache.move_to_end(cache_key)
+            self._last_audio_type = "mp3"
+            self._last_audio_chunks = cached
+            for index in range(repeat):
+                if index:
+                    await asyncio.sleep(0.5)
+                await self._play_cached_mp3()
+            return
+
+        # Collect streamed chunks so repeated phrases do not require another network request.
+        collected_chunks: list[bytes] = []
         communicate = edge_tts.Communicate(text, voice)
 
         try:
@@ -381,16 +378,17 @@ class TTSEngine:
                 if self._stop_event.is_set():
                     break
                 if chunk["type"] == "audio":
+                    data = chunk["data"]
 
-                    def _write():
+                    def _write(player=proc, audio=data):
                         try:
-                            proc.stdin.write(chunk["data"])
-                            proc.stdin.flush()
+                            player.stdin.write(audio)
+                            player.stdin.flush()
                         except Exception:
                             pass
 
                     await asyncio.to_thread(_write)
-                    collected_chunks.append(chunk["data"])
+                    collected_chunks.append(data)
         except Exception as e:
             logger.error("Edge TTS error: %s", e)
             raise TTSError(f"Edge TTS error: {e}") from e
@@ -409,9 +407,13 @@ class TTSEngine:
         if not self._stop_event.is_set() and collected_chunks:
             self._last_audio_type = "mp3"
             self._last_audio_chunks = collected_chunks
+            self._edge_cache[cache_key] = collected_chunks
+            self._edge_cache.move_to_end(cache_key)
+            if len(self._edge_cache) > 30:
+                self._edge_cache.popitem(last=False)
 
             if repeat > 1:
-                for r in range(repeat - 1):
+                for _r in range(repeat - 1):
                     if self._stop_event.is_set():
                         break
                     await asyncio.sleep(0.5)
@@ -461,50 +463,48 @@ class TTSEngine:
                     break
 
     async def speak(self, text: str, repeat: int = 1) -> None:
-        """Async wrapper."""
-        self.stop()
-        self._stop_event.clear()
-
+        """Synthesize and play text without blocking the Textual event loop."""
         text = text.strip()
         if not text:
             return
+        if repeat < 1:
+            raise TTSError("Repeat count must be at least 1.")
 
-        provider = self.config.get("tts_provider", "edge_tts")
-        try:
-            if provider == "edge_tts":
-                await self._speak_edge(text, repeat)
-            elif provider == "qwen_tts":
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._speak_qwen, text, repeat)
-            else:
-                raise TTSError(f"Unknown TTS provider: {provider}")
-        except TTSError:
-            await self._speak_say(text, repeat)
-        except Exception as e:
-            import traceback
-
-            with open(
-                "/Users/jenyanovak/Projects/active/ru-de-translator/ru_de_translator/tts_crash_traceback.txt",
-                "w",
-            ) as f:
-                f.write(traceback.format_exc())
+        async with self._speak_lock:
+            self.stop()
+            self._stop_event.clear()
+            provider = self.config.get("tts_provider", "edge_tts")
             try:
-                await self._speak_say(text, repeat)
-            except Exception:
-                raise TTSError(f"TTS failed: {e}") from e
+                if provider == "edge_tts":
+                    await self._speak_edge(text, repeat)
+                elif provider == "qwen_tts":
+                    await asyncio.to_thread(self._speak_qwen, text, repeat)
+                else:
+                    raise TTSError(f"Unknown TTS provider: {provider}")
+            except asyncio.CancelledError:
+                self.stop()
+                raise
+            except Exception as exc:
+                logger.warning("%s failed", provider, exc_info=True)
+                if shutil.which("say"):
+                    await self._speak_say(text, repeat)
+                elif isinstance(exc, TTSError):
+                    raise
+                else:
+                    raise TTSError(f"TTS failed: {exc}") from exc
 
     def clear_cache(self) -> None:
         """Clears the in-memory audio cache."""
         self._cache.clear()
+        self._edge_cache.clear()
         self._last_audio_chunks.clear()
+        self._last_audio_type = None
         logger.info("TTS cache cleared")
 
     async def practice(self, repeats: int, pause: float, progress_cb=None) -> None:
         """Plays the last generated audio chunks directly from memory."""
         if not self._last_audio_chunks or not self._last_audio_type:
-            raise TTSError(
-                "No audio available for practice. Please translate something first."
-            )
+            raise TTSError("No audio available for practice. Please translate something first.")
 
         self.stop()
         self._stop_event.clear()
@@ -526,18 +526,18 @@ class TTSEngine:
 
                 self._ffplay_proc = proc
 
-                def write_chunks():
+                def write_chunks(player=proc, chunks=tuple(self._last_audio_chunks)):
                     try:
-                        for chunk in self._last_audio_chunks:
+                        for chunk in chunks:
                             if self._stop_event.is_set():
                                 break
-                            proc.stdin.write(chunk)
-                            proc.stdin.flush()
+                            player.stdin.write(chunk)
+                            player.stdin.flush()
                     except Exception:
                         pass
                     finally:
                         try:
-                            proc.stdin.close()
+                            player.stdin.close()
                         except Exception:
                             pass
 
@@ -552,8 +552,9 @@ class TTSEngine:
 
             except Exception as e:
                 logger.error("ffplay practice error: %s", e)
-
-            self._ffplay_proc = None
+                raise TTSError(f"Audio playback failed: {e}") from e
+            finally:
+                self._ffplay_proc = None
 
             if i < repeats - 1 and not self._stop_event.is_set():
                 pause_time = 0.0

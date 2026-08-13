@@ -48,3 +48,7 @@ tts_crash_traceback.txt
 .idea/
 .vscode/
 *.swp
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
